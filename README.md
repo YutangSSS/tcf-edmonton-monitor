@@ -11,7 +11,8 @@ It downloads the page text and looks for signs that a new TCF slot may be availa
 - the number of `Closed` labels drops;
 - booking words such as `Register`, `Available`, `Purchase`, or `Book` appear near TCF exam rows.
 
-When a possible slot is detected, the GitHub Actions job fails and prints:
+When a possible slot is detected, the GitHub Actions job creates a new GitHub Issue,
+then fails and prints:
 
 ```text
 Possible new TCF Edmonton slot found. Check the website immediately.
@@ -68,7 +69,21 @@ To enable failure emails:
 5. Under **System**, enable email notifications for **Actions** or workflow failures.
 6. Make sure your repository is not muted or ignored in notification settings.
 
-After this is enabled, a failed monitor run should send you a GitHub Actions failure email.
+After this is enabled, each failed monitor run should send you a GitHub Actions failure email.
+
+## Issue Notifications
+
+The workflow also creates a new GitHub Issue every time it detects a possible slot.
+This gives you another notification path besides the failed Actions email.
+
+To receive issue emails at `yutangssong@gmail.com`:
+
+1. Open this repository on GitHub.
+2. Click **Watch** near the top-right.
+3. Choose **All Activity**.
+4. Confirm `yutangssong@gmail.com` is verified in your GitHub email settings.
+
+Every possible slot alert creates a fresh issue titled `Possible new TCF Edmonton slot found`.
 
 ## Local Test
 
