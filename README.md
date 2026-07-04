@@ -53,7 +53,11 @@ For example, after you notice September 2026 is sold out and you still want moni
 
 ## Email Notifications
 
-GitHub can email you when this workflow fails.
+GitHub can email you when this workflow fails. Use this email for alerts:
+
+```text
+yutangssong@gmail.com
+```
 
 To enable failure emails:
 
