@@ -1,0 +1,30 @@
+name: TCF Edmonton monitor
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  check-tcf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check TCF Edmonton page
+        env:
+          EXPECTED_MONTHS: "June 2026,July 2026,August 2026"
+          MIN_SOLD_OUT_COUNT: "34"
+          MIN_CLOSED_COUNT: "28"
+        run: python check_tcf.py
