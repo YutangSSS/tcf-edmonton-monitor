@@ -57,7 +57,7 @@ For example, after you notice September 2026 is sold out and you still want moni
 GitHub can email you when this workflow fails. Use this email for alerts:
 
 ```text
-yutangssong@gmail.com
+
 ```
 
 To enable failure emails:
