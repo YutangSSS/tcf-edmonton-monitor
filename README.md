@@ -81,7 +81,7 @@ To receive issue emails at `yutangssong@gmail.com`:
 1. Open this repository on GitHub.
 2. Click **Watch** near the top-right.
 3. Choose **All Activity**.
-4. Confirm `yutangssong@gmail.com` is verified in your GitHub email settings.
+4. Confirm  is verified in your GitHub email settings.
 
 Every possible slot alert creates a fresh issue titled `Possible new TCF Edmonton slot found`.
 
