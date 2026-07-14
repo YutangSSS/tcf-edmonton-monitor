@@ -1,88 +1,35 @@
-"""Monitor the Edmonton Alliance Francaise TCF page for possible new slots.
+"""Monitor the Edmonton Alliance Francaise TCF page for available slots.
 
-The script is intentionally small and conservative:
-- fetch the public TCF page;
-- extract readable text;
-- look for new exam months beyond a known baseline;
-- compare SOLD OUT / Closed counts against a known baseline;
-- look for booking-related words near exam rows.
-
-If a possible slot is found, the script exits with code 1 so GitHub Actions
-marks the run as failed and sends a notification when enabled.
+The monitor only alerts when an individual TCF exam row exposes an explicit
+booking signal such as ``Available`` or ``Register``.  Aggregate counts of
+``SOLD OUT`` and ``Closed`` rows are intentionally ignored because sessions
+naturally disappear from the page as their dates pass.
 """
 
 from __future__ import annotations
 
-import os
 import re
 import sys
-from typing import Iterable
 
 import requests
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 
 
 URL = "https://www.afedmonton.com/en/exams/tcf/"
 ALERT_MESSAGE = "Possible new TCF Edmonton slot found. Check the website immediately."
+ALERT_EXIT_CODE = 1
+ERROR_EXIT_CODE = 2
 
-# Baseline from the visible page as of 2026-07-04.
-# Override these in GitHub Actions env if the page changes and you want a new baseline.
-DEFAULT_EXPECTED_MONTHS = "June 2026,July 2026,August 2026"
-DEFAULT_MIN_SOLD_OUT_COUNT = 34
-DEFAULT_MIN_CLOSED_COUNT = 28
-
-BOOKING_KEYWORDS = ("Register", "Available", "Purchase", "Book")
-FULL_MONTHS = (
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-)
-MONTH_ABBREVIATIONS = {
-    "jan": "January",
-    "feb": "February",
-    "mar": "March",
-    "apr": "April",
-    "may": "May",
-    "jun": "June",
-    "jul": "July",
-    "aug": "August",
-    "sep": "September",
-    "sept": "September",
-    "oct": "October",
-    "nov": "November",
-    "dec": "December",
-}
-FULL_MONTH_PATTERN = "|".join(FULL_MONTHS)
-SHORT_MONTH_PATTERN = "|".join(MONTH_ABBREVIATIONS)
-WEEKDAY_PATTERN = (
-    r"Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|"
-    r"Mon|Tue|Wed|Thu|Fri|Sat|Sun"
-)
-MONTH_YEAR_PATTERN = re.compile(
-    rf"\b({FULL_MONTH_PATTERN})\s+20\d{{2}}\b",
-    re.IGNORECASE,
-)
-FULL_EXAM_DATE_PATTERN = re.compile(
-    rf"\b({FULL_MONTH_PATTERN})\s+\d{{1,2}},\s*(20\d{{2}})\b",
-    re.IGNORECASE,
-)
-SHORT_EXAM_DATE_PATTERN = re.compile(
-    rf"\b(?:{WEEKDAY_PATTERN})\s+\d{{1,2}}\s+({SHORT_MONTH_PATTERN})\s+(20\d{{2}})\b",
+BOOKING_KEYWORDS = ("Available", "Register", "Purchase", "Book")
+BOOKING_KEYWORD_PATTERN = re.compile(
+    r"\b(?:" + "|".join(map(re.escape, BOOKING_KEYWORDS)) + r")\b",
     re.IGNORECASE,
 )
 
 
-def fetch_page_text(url: str) -> str:
-    """Download the page and return normalized visible text."""
+def fetch_page_html(url: str) -> str:
+    """Download the page and return its HTML."""
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (compatible; TCFMonitor/1.0; "
@@ -91,124 +38,83 @@ def fetch_page_text(url: str) -> str:
     }
     response = requests.get(url, headers=headers, timeout=30)
     response.raise_for_status()
-
-    soup = BeautifulSoup(response.text, "html.parser")
-    for tag in soup(["script", "style", "noscript"]):
-        tag.decompose()
-
-    return soup.get_text("\n", strip=True)
+    return response.text
 
 
-def env_list(name: str, default: str) -> set[str]:
-    """Read a comma-separated environment variable into normalized values."""
-    raw_value = os.getenv(name, default)
-    return {item.strip().lower() for item in raw_value.split(",") if item.strip()}
+def normalize_spaces(value: str) -> str:
+    """Collapse HTML whitespace into a readable single-line string."""
+    return " ".join(value.split())
 
 
-def env_int(name: str, default: int) -> int:
-    """Read an integer environment variable with a safe default."""
-    raw_value = os.getenv(name)
-    if raw_value is None:
-        return default
-    try:
-        return int(raw_value)
-    except ValueError:
-        print(f"Invalid {name}={raw_value!r}; using default {default}.")
-        return default
+def class_tokens(element: Tag) -> set[str]:
+    """Return an element's CSS classes in lowercase."""
+    return {str(token).lower() for token in element.get("class", [])}
 
 
-def find_months(text: str) -> set[str]:
-    """Find exam months from month headings and exam date rows."""
-    months = set()
-    for match in MONTH_YEAR_PATTERN.finditer(text):
-        month, year = match.group(1), match.group(0)[-4:]
-        months.add(f"{month.title()} {year}")
+def find_available_exam_rows(html: str) -> list[str]:
+    """Return TCF exam rows with an explicit booking signal.
 
-    for match in FULL_EXAM_DATE_PATTERN.finditer(text):
-        month, year = match.group(1), match.group(2)
-        months.add(f"{month.title()} {year}")
+    Availability is evaluated within each exam row.  Static help text elsewhere
+    on the page therefore cannot trigger an alert.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    rows = soup.select("tr.tableRow") or soup.select("tr")
+    available_rows: list[str] = []
 
-    for match in SHORT_EXAM_DATE_PATTERN.finditer(text):
-        month = MONTH_ABBREVIATIONS[match.group(1).lower()]
-        year = match.group(2)
-        months.add(f"{month} {year}")
-
-    return months
-
-
-def count_phrase(text: str, phrase: str) -> int:
-    """Count a phrase case-insensitively."""
-    return len(re.findall(re.escape(phrase), text, flags=re.IGNORECASE))
-
-
-def keyword_hits_near_tcf_rows(lines: Iterable[str]) -> list[str]:
-    """Find booking words close to TCF exam rows, skipping static help text."""
-    hits: list[str] = []
-    recent_lines: list[str] = []
-
-    for line in lines:
-        clean_line = " ".join(line.split())
-        if not clean_line:
+    for row in rows:
+        title_element = row.select_one(".es-exam-title")
+        if title_element is None:
             continue
 
-        recent_lines.append(clean_line)
-        recent_lines = recent_lines[-6:]
-        context = " ".join(recent_lines)
-
-        if "TCF Canada" not in context:
+        title = normalize_spaces(title_element.get_text(" ", strip=True))
+        if "tcf" not in title.lower():
             continue
 
-        for keyword in BOOKING_KEYWORDS:
-            if re.search(rf"\b{re.escape(keyword)}\b", clean_line, re.IGNORECASE):
-                hits.append(clean_line)
-                break
+        signals: list[str] = []
+        status_elements = row.select(".es-status, .es-sold-out")
+        for element in status_elements:
+            status_text = normalize_spaces(element.get_text(" ", strip=True))
+            classes = class_tokens(element)
+            if {"es-status-available", "es-status-open"} & classes:
+                signals.append(f"status: {status_text or 'available'}")
+            elif BOOKING_KEYWORD_PATTERN.search(status_text):
+                signals.append(f"status: {status_text}")
 
-    return hits
+        booking_controls = " ".join(
+            normalize_spaces(element.get_text(" ", strip=True))
+            for element in row.select("a, button, input[type='submit']")
+        )
+        keyword_match = BOOKING_KEYWORD_PATTERN.search(booking_controls)
+        if keyword_match:
+            signals.append(f"booking action: {normalize_spaces(booking_controls)}")
+
+        unique_signals = list(dict.fromkeys(signals))
+        if unique_signals:
+            available_rows.append(f"{title} — {'; '.join(unique_signals)}")
+
+    return available_rows
 
 
 def main() -> int:
     print(f"Checking: {URL}")
-    text = fetch_page_text(URL)
-    lines = text.splitlines()
 
-    expected_months = env_list("EXPECTED_MONTHS", DEFAULT_EXPECTED_MONTHS)
-    min_sold_out_count = env_int("MIN_SOLD_OUT_COUNT", DEFAULT_MIN_SOLD_OUT_COUNT)
-    min_closed_count = env_int("MIN_CLOSED_COUNT", DEFAULT_MIN_CLOSED_COUNT)
+    try:
+        html = fetch_page_html(URL)
+    except requests.RequestException as error:
+        print(f"Monitor error: could not fetch the TCF page: {error}", file=sys.stderr)
+        return ERROR_EXIT_CODE
 
-    found_months = find_months(text)
-    new_months = sorted(
-        month for month in found_months if month.lower() not in expected_months
-    )
+    available_rows = find_available_exam_rows(html)
+    print(f"TCF exam rows with explicit availability: {len(available_rows)}")
 
-    sold_out_count = count_phrase(text, "SOLD OUT")
-    closed_count = count_phrase(text, "Closed")
-    keyword_hits = keyword_hits_near_tcf_rows(lines)
-
-    print(f"Months found: {', '.join(sorted(found_months)) or 'none'}")
-    print(f"SOLD OUT count: {sold_out_count} (baseline minimum: {min_sold_out_count})")
-    print(f"Closed count: {closed_count} (baseline minimum: {min_closed_count})")
-
-    reasons: list[str] = []
-    if new_months:
-        reasons.append(f"New month(s) found: {', '.join(new_months)}")
-    if sold_out_count < min_sold_out_count:
-        reasons.append("SOLD OUT count decreased.")
-    if closed_count < min_closed_count:
-        reasons.append("Closed count decreased.")
-    if keyword_hits:
-        reasons.append(
-            "Booking keyword(s) found near TCF exam rows: "
-            + " | ".join(keyword_hits[:5])
-        )
-
-    if reasons:
+    if available_rows:
         print("\n" + ALERT_MESSAGE)
         print("Reasons:")
-        for reason in reasons:
-            print(f"- {reason}")
-        return 1
+        for row in available_rows:
+            print(f"- {row}")
+        return ALERT_EXIT_CODE
 
-    print("No possible new TCF Edmonton slot detected.")
+    print("No explicit availability detected.")
     return 0
 
 
