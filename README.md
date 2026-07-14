@@ -4,23 +4,20 @@ This project checks the Edmonton Alliance Francaise TCF page every 30 minutes:
 
 https://www.afedmonton.com/en/exams/tcf/
 
-It downloads the page text and looks for signs that a new TCF slot may be available:
+It inspects individual TCF Canada exam rows and alerts only when a row exposes
+an explicit booking signal such as `Available`, `Register`, `Purchase`, `Book`,
+or the site's available-status class. It intentionally does not use aggregate
+`SOLD OUT` or `Closed` counts, because old sessions naturally disappear from
+the page as their dates pass.
 
-- a new exam month appears, such as September 2026 or October 2026;
-- the number of `SOLD OUT` labels drops;
-- the number of `Closed` labels drops;
-- booking words such as `Register`, `Available`, `Purchase`, or `Book` appear near TCF exam rows.
-
-When a possible slot is detected, the GitHub Actions job creates a new GitHub Issue,
-then fails and prints:
-
-```text
-Possible new TCF Edmonton slot found. Check the website immediately.
-```
+When a possible slot is detected, the GitHub Actions job creates a new GitHub
+Issue containing the detector output, then fails so GitHub can send a workflow
+failure notification.
 
 ## Files
 
 - `check_tcf.py` - Python monitor script.
+- `test_check_tcf.py` - Detector regression tests.
 - `requirements.txt` - Python dependencies.
 - `.github/workflows/tcf-monitor.yml` - GitHub Actions workflow.
 
@@ -34,65 +31,32 @@ The workflow runs every 30 minutes with this cron schedule:
 
 You can also run it manually from GitHub:
 
-1. Open your repository on GitHub.
+1. Open the repository on GitHub.
 2. Go to **Actions**.
 3. Select **TCF Edmonton monitor**.
 4. Click **Run workflow**.
 
-## Baseline Settings
+## Exit Codes
 
-The current baseline is set in `.github/workflows/tcf-monitor.yml`:
+- `0` means no explicit availability was detected.
+- `1` means a TCF exam row exposed a booking signal and an alert was created.
+- `2` means the page could not be fetched; the workflow fails without creating a misleading slot alert.
 
-```yaml
-EXPECTED_MONTHS: "June 2026,July 2026,August 2026"
-MIN_SOLD_OUT_COUNT: "34"
-MIN_CLOSED_COUNT: "28"
-```
+## Notifications
 
-If the page changes and you want to accept the new page as normal, update these values.
-For example, after you notice September 2026 is sold out and you still want monitoring to continue, add `September 2026` to `EXPECTED_MONTHS` and adjust the counts.
+GitHub can email you when this workflow fails. Configure workflow failure
+notifications under your GitHub account's **Settings → Notifications** and
+make sure this repository is not muted.
 
-## Email Notifications
-
-GitHub can email you when this workflow fails. Use this email for alerts:
-
-```text
-
-```
-
-To enable failure emails:
-
-1. Log in to GitHub.
-2. Click your profile photo in the top-right corner.
-3. Go to **Settings**.
-4. Go to **Notifications**.
-5. Under **System**, enable email notifications for **Actions** or workflow failures.
-6. Make sure your repository is not muted or ignored in notification settings.
-
-After this is enabled, each failed monitor run should send you a GitHub Actions failure email.
-
-## Issue Notifications
-
-The workflow also creates a new GitHub Issue every time it detects a possible slot.
-This gives you another notification path besides the failed Actions email.
-
-To receive issue emails at `yutangssong@gmail.com`:
-
-1. Open this repository on GitHub.
-2. Click **Watch** near the top-right.
-3. Choose **All Activity**.
-4. Confirm  is verified in your GitHub email settings.
-
-Every possible slot alert creates a fresh issue titled `Possible new TCF Edmonton slot found`.
+The workflow also creates an issue for each confirmed availability alert. Watch
+the repository with **All Activity** enabled if you want issue notifications.
 
 ## Local Test
 
-Run this locally:
+Run the monitor and its regression tests locally:
 
 ```bash
 pip install -r requirements.txt
 python check_tcf.py
+python -m unittest -v test_check_tcf.py
 ```
-
-Exit code `0` means no possible slot was detected.
-Exit code `1` means the script found a possible slot and printed the alert message.
