@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 
 import requests
 from bs4 import BeautifulSoup
@@ -20,6 +21,9 @@ URL = "https://www.afedmonton.com/en/exams/tcf/"
 ALERT_MESSAGE = "Possible new TCF Edmonton slot found. Check the website immediately."
 ALERT_EXIT_CODE = 1
 ERROR_EXIT_CODE = 2
+FETCH_MAX_ATTEMPTS = 4
+FETCH_TIMEOUT_SECONDS = 30
+RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 BOOKING_KEYWORDS = ("Available", "Register", "Purchase", "Book")
 BOOKING_KEYWORD_PATTERN = re.compile(
@@ -29,16 +33,48 @@ BOOKING_KEYWORD_PATTERN = re.compile(
 
 
 def fetch_page_html(url: str) -> str:
-    """Download the page and return its HTML."""
+    """Download the page with bounded retries and return its HTML."""
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (compatible; TCFMonitor/1.0; "
             "+https://github.com/actions)"
         )
     }
-    response = requests.get(url, headers=headers, timeout=30)
-    response.raise_for_status()
-    return response.text
+
+    for attempt in range(1, FETCH_MAX_ATTEMPTS + 1):
+        try:
+            response = requests.get(
+                url,
+                headers=headers,
+                timeout=FETCH_TIMEOUT_SECONDS,
+            )
+            if response.status_code in RETRYABLE_STATUS_CODES:
+                raise requests.HTTPError(
+                    f"temporary HTTP status {response.status_code}",
+                    response=response,
+                )
+            response.raise_for_status()
+            return response.text
+        except requests.RequestException as error:
+            response = getattr(error, "response", None)
+            retryable = isinstance(error, (requests.ConnectionError, requests.Timeout))
+            retryable = retryable or (
+                isinstance(error, requests.HTTPError)
+                and response is not None
+                and response.status_code in RETRYABLE_STATUS_CODES
+            )
+            if not retryable or attempt == FETCH_MAX_ATTEMPTS:
+                raise
+
+            delay_seconds = 2 ** attempt
+            print(
+                f"Fetch attempt {attempt}/{FETCH_MAX_ATTEMPTS} failed: "
+                f"{error}; retrying in {delay_seconds}s.",
+                file=sys.stderr,
+            )
+            time.sleep(delay_seconds)
+
+    raise RuntimeError("unreachable")
 
 
 def normalize_spaces(value: str) -> str:

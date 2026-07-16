@@ -8,7 +8,8 @@ It inspects individual TCF Canada exam rows and alerts only when a row exposes
 an explicit booking signal such as `Available`, `Register`, `Purchase`, `Book`,
 or the site's available-status class. It intentionally does not use aggregate
 `SOLD OUT` or `Closed` counts, because old sessions naturally disappear from
-the page as their dates pass.
+the page as their dates pass. Page fetches are retried with exponential backoff
+before a connection failure is reported.
 
 When a possible slot is detected, the GitHub Actions job creates a new GitHub
 Issue containing the detector output, then fails so GitHub can send a workflow
@@ -40,7 +41,7 @@ You can also run it manually from GitHub:
 
 - `0` means no explicit availability was detected.
 - `1` means a TCF exam row exposed a booking signal and an alert was created.
-- `2` means the page could not be fetched; the workflow fails without creating a misleading slot alert.
+- `2` means the page could not be fetched after retries; the workflow fails without creating a misleading slot alert.
 
 ## Notifications
 
