@@ -71,5 +71,5 @@ jobs:
       - name: Fail workflow on monitor error
         if: ${{ steps.tcf_check.outputs.exit_code != '0' && steps.tcf_check.outputs.exit_code != '1' }}
         run: |
-          echo "TCF monitor failed before it could evaluate availability."
+          echo "TCF monitor failed after retrying the page fetch."
           exit 1
